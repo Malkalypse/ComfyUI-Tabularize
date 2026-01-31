@@ -8,7 +8,10 @@ Automatic node column organization and link routing for ComfyUI workflows.
 Automatically arranges your workflow nodes into clean, organized columns based on their connections:
 - **Chain Detection**: Identifies linear node chains and organizes them horizontally
 - **Column Layout**: Groups nodes into vertical columns based on their depth in the graph
-- **Smart Spacing**: Maintains consistent spacing between nodes and columns
+- **Leftward Connection Prevention**: Automatically detects and corrects backward-flowing connections
+- **Uniform Spacing**: Maintains consistent 100px spacing between columns
+- **Consistent Sizing**: Nodes in the same column are sized to match the widest node
+- **Smart Spacing**: Maintains consistent spacing between nodes vertically
 - **Preserved Connections**: All links remain intact during reorganization
 
 ### 🔗 Reroute Links
@@ -75,8 +78,16 @@ The extension uses a hybrid JavaScript/Python architecture:
 1. **Build Graph**: Creates parent/child relationship mapping from node connections
 2. **Find Chains**: Identifies linear sequences of connected nodes
 3. **Assign Columns**: Groups nodes by their depth in the dependency graph
-4. **Calculate Positions**: Places nodes in columns with consistent spacing
-5. **Apply Layout**: Updates node positions on the canvas
+4. **Fix Leftward Connections**: Iteratively detects and corrects backward-flowing links
+   - Analyzes all connections to find those flowing leftward
+   - Moves target nodes to columns after their origins
+   - Recalculates column widths after each adjustment
+   - Runs up to 20 iterations to resolve complex dependencies
+5. **Rebuild Columns**: Removes empty columns and recalculates widths
+6. **Match Widths**: Resizes nodes to match their column's maximum width
+7. **Apply Uniform Spacing**: Positions columns with consistent 100px gaps
+8. **Vertical Sort**: Arranges nodes within columns based on port connections
+9. **Apply Layout**: Updates node positions on the canvas
 
 ### Reroute Algorithm
 

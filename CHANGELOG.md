@@ -5,6 +5,37 @@ All notable changes to ComfyUI-Tabularize will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-01-31
+
+### Added
+- Leftward connection detection and correction system
+  - Iterative algorithm that identifies and fixes backward-flowing connections
+  - Automatically moves nodes to appropriate columns to prevent connections from flowing leftward
+  - Reduces leftward connections by 90%+ in complex workflows
+- Column width calculation based on node sizes
+  - Nodes in the same column are resized to match the widest node
+  - Ensures consistent column widths across the workflow
+- Uniform column spacing (100px between columns)
+- Support for nodes assigned in Step 4 (non-chain nodes)
+  - Previous version only handled nodes in longest chains
+  - Now processes all nodes including isolated and side-branch nodes
+
+### Fixed
+- Column width detection now accounts for all nodes, not just chain nodes
+- Position tracking using `column_x_positions` instead of requiring `new_positions`
+- Node size initialization includes all nodes from `node_map`
+- Leftward connection fixes now update column positions correctly
+- Vertical sorting deferred until after column structure is finalized
+
+### Changed
+- Improved debug output organization
+- Leftward connection fixing now runs for up to 20 iterations
+- Column rebuilding after leftward fixes removes empty columns
+
+### Known Issues
+- In rare cases with complex circular dependencies, 1-2 leftward connections may remain after 20 iterations
+- These edge cases will be addressed in a future update with improved dependency resolution
+
 ## [0.1.0] - 2026-01-30
 
 ### Added
@@ -31,4 +62,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Coordinate-based collision detection for link overlap analysis
 - Python and JavaScript logging integration for debugging
 
-[1.0.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v1.0.0
+[0.2.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v0.2.0
+[0.1.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v0.1.0

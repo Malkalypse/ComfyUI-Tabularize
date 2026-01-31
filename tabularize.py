@@ -4,7 +4,7 @@ All graph processing happens here in Python
 '''
 
 from .utils import set_debug
-DEBUG_LEVEL = 0
+DEBUG_LEVEL = 1
 debug = set_debug( DEBUG_LEVEL )
 
 
@@ -66,6 +66,7 @@ def line_segment_intersects_rect(
             return True
     
     return False
+
 
 def build_node_graph( nodes, links):
     '''
@@ -453,10 +454,27 @@ def organize_single_component( nodes, links, start_y ):
 
             elif positioned_children:
                 # Place in column before the first (leftmost) positioned child
+                # BUT: only if this node is truly a predecessor (has no inputs from other nodes)
+                # If the node has inputs, it should go AFTER its inputs, not before its outputs
                 child_columns = [node_columns[cid] for cid in positioned_children]
                 min_child_col = min( child_columns )
-                target_column = min_child_col - 1
-                debug( f'  {node["type"]}({node_id}): Has children in columns {child_columns} -> placing in column {target_column}' )
+                
+                # Check if this node actually has any connections (parents or children)
+                has_inputs = len(parents.get(node_id, [])) > 0
+                
+                if has_inputs:
+                    # This node has inputs but they're not positioned yet
+                    # Don't place it before its children - place it at end for now
+                    # It will be handled in another pass or positioned at the end
+                    target_column = max(column_x_positions.keys()) + 1 if column_x_positions else 0
+                    debug( f'  {node["type"]}({node_id}): Has unpositioned inputs and children in columns {child_columns} -> deferring to column {target_column}' )
+                elif min_child_col <= 0:
+                    # Children are at the start and node has no inputs - place at start
+                    target_column = 0
+                    debug( f'  {node["type"]}({node_id}): No inputs, children at start -> placing in column 0' )
+                else:
+                    target_column = min_child_col - 1
+                    debug( f'  {node["type"]}({node_id}): No inputs, has children in columns {child_columns} -> placing in column {target_column}' )
 
             else:
                 # Node is isolated or only connects to other unpositioned nodes
@@ -500,138 +518,333 @@ def organize_single_component( nodes, links, start_y ):
                 node_columns[node_id] = pos_to_column[x_pos]
     
     # Step 5: Sort nodes vertically within each column based on connected ports
+    # DEFERRED TO AFTER STEP 6D - Columns must be finalized first
+    # This entire step is now executed as Step 7 after column finalization
+    
+    # Step 6: Fix leftward connections (iterative post-processing)
     debug( '\n' + '-'*50 )
-    debug( 'Step 5: Sorting nodes vertically by port connections' )
+    debug( 'Step 6: Detecting and fixing leftward connections' )
     debug( '-'*50 )
     
-    NODE_VERTICAL_SPACING = 60  # Spacing between nodes in same column (accounts for 30px title bar)
-    PORT_SPACING          = 20  # Estimated spacing between ports on a node
+    # Initialize node_sizes with original sizes (don't resize yet)
+    node_sizes = {}
+    for node_id in node_map.keys():
+        node_sizes[node_id] = [node_map[node_id]['size'][0], node_map[node_id]['size'][1]]
     
-    def calculate_port_y( node_id, slot_index, is_output=True ):
-        '''Calculate estimated Y position of a port on a node'''
-
-        if node_id not in new_positions:
-            return 0
-        
-        node_y = new_positions[node_id][1]
-
-        # Ports start with some offset from top of node
-        port_offset = 30 + (slot_index * PORT_SPACING)
-        return node_y + port_offset
+    max_iterations = 20
+    iteration = 0
     
-    def get_connected_port_positions( node_id ):
-        '''Get Y positions of all ports this node connects to, sorted by Y'''
+    while iteration < max_iterations:
+        iteration += 1
         
-        port_positions = []
+        # Recalculate column widths based on current node assignments
+        column_widths = {}
+        for node_id in node_columns.keys():
+            col_idx = node_columns.get(node_id)
+            if col_idx is not None and node_id in node_sizes:
+                node_width = node_sizes[node_id][0]
+                if col_idx not in column_widths:
+                    column_widths[col_idx] = node_width
+                else:
+                    column_widths[col_idx] = max(column_widths[col_idx], node_width)
         
-        # Check parent connections (input ports)
+        # Detect leftward connections
+        leftward_links = []
+        debug( f'\nIteration {iteration}: Checking {len(links)} links for leftward connections' )
+        debug( f'  Column widths: {column_widths}' )
+        
         for link in links:
-            if link['target_id'] == node_id:
-                parent_id   = link['origin_id']
-                origin_slot = link['origin_slot']
-
-                if parent_id in new_positions:
-                    port_y = calculate_port_y( parent_id, origin_slot, is_output=True )
-                    port_positions.append( port_y )
+            origin_id = link['origin_id']
+            target_id = link['target_id']
+            
+            if origin_id not in node_columns or target_id not in node_columns:
+                continue
+            
+            # Get X positions from column assignments
+            origin_col = node_columns[origin_id]
+            target_col = node_columns[target_id]
+            origin_x = column_x_positions.get(origin_col, 0)
+            target_x = column_x_positions.get(target_col, 0)
+            
+            # Get origin node width - use column width since nodes will be resized
+            if origin_col in column_widths:
+                origin_width = column_widths[origin_col]
+            else:
+                origin_width = node_sizes.get(origin_id, node_map[origin_id]['size'])[0]
+            
+            origin_right = origin_x + origin_width
+            
+            # Check if target is to the left of origin's right edge
+            if target_x < origin_right:
+                distance = origin_right - target_x
+                debug( f'  Leftward: {origin_id} (col {origin_col}, x={origin_x:.0f}, width={origin_width:.0f}, right={origin_right:.0f}) -> {target_id} (col {node_columns[target_id]}, x={target_x:.0f}) distance={distance:.0f}' )
+                leftward_links.append({
+                    'link': link,
+                    'origin_id': origin_id,
+                    'target_id': target_id,
+                    'distance': distance,
+                    'origin_col': node_columns[origin_id],
+                    'target_col': node_columns[target_id]
+                })
         
-        # Check child connections (output ports)
-        for link in links:
-            if link['origin_id'] == node_id:
-                child_id    = link['target_id']
-                target_slot = link['target_slot']
-
-                if child_id in new_positions:
-                    port_y = calculate_port_y( child_id, target_slot, is_output=False )
-                    port_positions.append( port_y )
+        if not leftward_links:
+            debug( f'\n✓ No leftward connections found after {iteration-1} iteration(s)' )
+            break
         
-        return sorted( port_positions )
+        debug( f'\nIteration {iteration}: Found {len(leftward_links)} leftward connections' )
+        
+        # Group by target node (a target might have multiple leftward inputs)
+        targets_to_fix = {}
+        for lw in leftward_links:
+            target_id = lw['target_id']
+            if target_id not in targets_to_fix:
+                targets_to_fix[target_id] = []
+            targets_to_fix[target_id].append(lw)
+        
+        # For each target that needs fixing, move it to come after its rightmost origin
+        for target_id, lw_links in targets_to_fix.items():
+            # Find the rightmost origin column
+            max_origin_col = max(lw['origin_col'] for lw in lw_links)
+            current_target_col = node_columns[target_id]
+            
+            # Find the best column to place this node:
+            # Try existing columns after max_origin_col first, then create new if needed
+            new_target_col = None
+            
+            # Look for an existing column we can use
+            for col_idx in sorted(column_x_positions.keys()):
+                if col_idx > max_origin_col:
+                    # Check if moving to this column would create new leftward connections
+                    would_create_leftward = False
+                    for link in links:
+                        if link['origin_id'] == target_id:
+                            child_id = link['target_id']
+                            if child_id in node_columns and node_columns[child_id] <= col_idx:
+                                would_create_leftward = True
+                                break
+                    
+                    if not would_create_leftward:
+                        new_target_col = col_idx
+                        break
+            
+            # If no existing column works, create a new one
+            if new_target_col is None:
+                new_target_col = max_origin_col + 1
+            
+            if new_target_col != current_target_col:
+                # Update the column assignment
+                node_columns[target_id] = new_target_col
+                
+                # Ensure this column exists in tracking
+                if new_target_col not in column_x_positions:
+                    column_x_positions[new_target_col] = 0  # Placeholder
+                
+                # Calculate a temporary X position for this iteration
+                # Find the rightmost origin's right edge
+                max_origin_right = 0
+                for lw in lw_links:
+                    origin_id = lw['origin_id']
+                    origin_col = node_columns[origin_id]
+                    origin_x = column_x_positions.get(origin_col, 0)
+                    origin_width = column_widths.get(origin_col, node_sizes.get(origin_id, node_map[origin_id]['size'])[0])
+                    origin_right = origin_x + origin_width
+                    max_origin_right = max(max_origin_right, origin_right)
+                
+                # Place target to the right of the rightmost origin
+                temp_x = max_origin_right + COLUMN_SPACING
+                column_x_positions[new_target_col] = temp_x
+                
+                debug( f'  Moved {node_map[target_id]["type"]}({target_id}): col {current_target_col} -> col {new_target_col} (temp x={temp_x:.0f})' )
+        
+        debug( f'  Fixed {len(targets_to_fix)} nodes in this iteration' )
     
-    # Group nodes by column
-    columns_to_nodes = {}  # column_idx -> list of node_ids
+    if iteration >= max_iterations:
+        debug( f'\n⚠ Warning: Stopped after {max_iterations} iterations (possible circular dependencies)' )
+    
+    # Recalculate column X positions with consistent spacing
+    debug( '\n' + '-'*50 )
+    debug( 'Step 6b: Rebuilding column structure after leftward fixes' )
+    debug( '-'*50 )
+    
+    # Get all columns in order
+    sorted_columns = sorted(column_x_positions.keys())
+    
+    # Rebuild columns_to_nodes mapping based on final node_columns
+    columns_to_nodes = {}
     for node_id, col_idx in node_columns.items():
         if col_idx not in columns_to_nodes:
             columns_to_nodes[col_idx] = []
         columns_to_nodes[col_idx].append(node_id)
     
-    # Sort and position nodes in each column
-    new_positions = {}
+    # Remove empty columns from column_x_positions and column_widths
+    empty_columns = [col_idx for col_idx in column_x_positions.keys() if col_idx not in columns_to_nodes]
+    for col_idx in empty_columns:
+        del column_x_positions[col_idx]
+        if col_idx in column_widths:
+            del column_widths[col_idx]
+        debug( f'  Removed empty column {col_idx}' )
     
-    for col_idx in sorted( columns_to_nodes.keys() ):
+    if empty_columns:
+        debug( f'  Removed {len(empty_columns)} empty columns: {empty_columns}' )
+    
+    # Update sorted_columns after removing empties
+    sorted_columns = sorted(column_x_positions.keys())
+    
+    # Recalculate column widths based on actual nodes in each column
+    for col_idx in sorted_columns:
+        if col_idx in columns_to_nodes:
+            max_width = max(node_map[node_id]['size'][0] for node_id in columns_to_nodes[col_idx])
+            column_widths[col_idx] = max_width
+            debug( f'  Column {col_idx}: {len(columns_to_nodes[col_idx])} nodes, max width={max_width}' )
+    
+    debug( f'\n✓ Rebuilt column structure with {len(sorted_columns)} columns' )
+    
+    # Step 6c: Resize nodes to match their column widths
+    debug( '\n' + '-'*50 )
+    debug( 'Step 6c: Matching node widths within columns' )
+    debug( '-'*50 )
+    
+    for col_idx in sorted_columns:
+        if col_idx not in columns_to_nodes:
+            continue
+            
         nodes_in_column = columns_to_nodes[col_idx]
-        x_pos           = column_x_positions[col_idx]
+        column_width = column_widths[col_idx]
+        
+        debug( f'Column {col_idx}: Setting all {len(nodes_in_column)} nodes to width {column_width}', 2 )
+        
+        for node_id in nodes_in_column:
+            node = node_map[node_id]
+            original_width = node['size'][0]
+            node_sizes[node_id] = [column_width, node['size'][1]]
+            
+            if original_width != column_width:
+                debug( f'  {node["type"]}({node_id}): {original_width} -> {column_width}', 3 )
+    
+    debug( f'\n✓ Resized {len(node_sizes)} nodes to match column widths' )
+    
+    # Step 6d: Space columns uniformly
+    debug( '\n' + '-'*50 )
+    debug( 'Step 6d: Spacing columns uniformly' )
+    debug( '-'*50 )
+    
+    # Recalculate X positions with consistent spacing
+    current_x = START_X
+    for col_idx in sorted_columns:
+        old_x = column_x_positions[col_idx]
+        column_x_positions[col_idx] = current_x
+        
+        debug( f'  Column {col_idx}: X={old_x:.0f} -> {current_x:.0f} (width={column_widths[col_idx]})', 2 )
+        
+        # Update all nodes in this column
+        for node_id, node_col in node_columns.items():
+            if node_col == col_idx and node_id in new_positions:
+                new_positions[node_id][0] = current_x
+        
+        # Move to next column position
+        current_x += column_widths[col_idx] + COLUMN_SPACING
+    
+    debug( f'\n✓ Spaced {len(sorted_columns)} columns with {COLUMN_SPACING}px gaps' )
+    
+    # Step 7: Sort nodes vertically within each column (NOW that columns are finalized)
+    debug( '\n' + '-'*50 )
+    debug( 'Step 7: Sorting nodes vertically by port connections' )
+    debug( '-'*50 )
+    
+    NODE_VERTICAL_SPACING = 60
+    PORT_SPACING = 20
+    
+    def calculate_port_y( node_id, slot_index, is_output=True ):
+        '''Calculate estimated Y position of a port on a node'''
+        if node_id not in new_positions:
+            return 0
+        node_y = new_positions[node_id][1]
+        port_offset = 30 + (slot_index * PORT_SPACING)
+        return node_y + port_offset
+    
+    def get_connected_port_positions( node_id ):
+        '''Get Y positions of all ports this node connects to, sorted by Y'''
+        port_positions = []
+        for link in links:
+            if link['target_id'] == node_id:
+                parent_id = link['origin_id']
+                origin_slot = link['origin_slot']
+                if parent_id in new_positions:
+                    port_y = calculate_port_y( parent_id, origin_slot, is_output=True )
+                    port_positions.append( port_y )
+            if link['origin_id'] == node_id:
+                child_id = link['target_id']
+                target_slot = link['target_slot']
+                if child_id in new_positions:
+                    port_y = calculate_port_y( child_id, target_slot, is_output=False )
+                    port_positions.append( port_y )
+        return sorted( port_positions )
+    
+    # Sort each column vertically
+    for col_idx in sorted_columns:
+        if col_idx not in columns_to_nodes:
+            continue
+        
+        nodes_in_column = columns_to_nodes[col_idx]
+        x_pos = column_x_positions[col_idx]
         
         debug( f'\nColumn {col_idx} (X={x_pos}): {len(nodes_in_column)} nodes' )
         
-        # Sort nodes by their connected port positions
         def sort_key( node_id ):
             port_positions = get_connected_port_positions( node_id )
-
-            # Return tuple of port positions for sorting (ties broken by subsequent ports)
-            # Pad with infinity so nodes with fewer connections sort last
-            return port_positions + [float( 'inf' )] * 10 if port_positions else [float( 'inf' )] * 10
+            return port_positions + [float('inf')] * 10 if port_positions else [float('inf')] * 10
         
         sorted_nodes = sorted( nodes_in_column, key=sort_key )
-        
-        # Position nodes vertically
         current_y = start_y
         
         for node_id in sorted_nodes:
-            node           = node_map[node_id]
-            node_height    = node['size'][1]
+            node = node_map[node_id]
+            node_height = node_sizes[node_id][1]
             port_positions = get_connected_port_positions( node_id )
             
             new_positions[node_id] = [x_pos, current_y]
-            
             port_str = f'ports at {port_positions}' if port_positions else 'no connections'
-            debug( f'  {node["type"]}({node_id}): {port_str} -> Y={current_y}' )
+            debug( f'  {node["type"]}({node_id}): {port_str} -> Y={current_y}', 2 )
             
             current_y += node_height + NODE_VERTICAL_SPACING
     
-    debug( f'\n✓ All {len( nodes )} nodes positioned with proper vertical sorting' )
+    debug( f'\n✓ All nodes positioned with proper vertical sorting' )
     
-    # Step 5b: Re-sort first column based on second column's input port positions
+    # Step 7b: Re-sort first column based on child port positions
     if 0 in columns_to_nodes and 1 in columns_to_nodes:
         debug( '\n' + '-'*50 )
-        debug( 'Step 5b: Re-sorting first column based on child port positions' )
+        debug( 'Step 7b: Re-sorting first column based on child port positions' )
         debug( '-'*50 )
         
         first_column_nodes = columns_to_nodes[0]
         
         def get_child_input_port_positions( node_id ):
-            '''Get Y positions of child nodes' input ports that this node connects to'''
             port_positions = []
-            
             for link in links:
                 if link['origin_id'] == node_id:
-                    child_id    = link['target_id']
+                    child_id = link['target_id']
                     target_slot = link['target_slot']
-                    
                     if child_id in new_positions:
                         port_y = calculate_port_y( child_id, target_slot, is_output=False )
                         port_positions.append( port_y )
-            
             return sorted( port_positions )
         
-        # Sort first column nodes by their children's input port positions
         def first_col_sort_key( node_id ):
             port_positions = get_child_input_port_positions( node_id )
             return port_positions + [float('inf')] * 10 if port_positions else [float('inf')] * 10
         
         sorted_first_col = sorted( first_column_nodes, key=first_col_sort_key )
-        
-        # Re-position first column nodes
-        x_pos     = column_x_positions[0]
+        x_pos = column_x_positions[0]
         current_y = start_y
         
         debug( f'\nColumn 0 (X={x_pos}): Re-positioning {len(sorted_first_col)} nodes' )
         
         for node_id in sorted_first_col:
-            node           = node_map[node_id]
-            node_height    = node['size'][1]
+            node = node_map[node_id]
+            node_height = node_sizes[node_id][1]
             port_positions = get_child_input_port_positions( node_id )
             
             new_positions[node_id] = [x_pos, current_y]
-            
             port_str = f'child ports at {port_positions}' if port_positions else 'no connections'
             debug( f'  {node["type"]}({node_id}): {port_str} -> Y={current_y}' )
             
@@ -639,28 +852,6 @@ def organize_single_component( nodes, links, start_y ):
         
         debug( f'\n✓ First column re-sorted based on child connections' )
     
-    # Adjust node widths to match column width
-    debug( '\n' + '-'*50 )
-    debug( '\nStep 3b: Matching node widths within columns' )
-    debug( '-'*50 )
-    
-    node_sizes = {}  # node_id -> [width, height]
-    
-    for col_idx in sorted( columns_to_nodes.keys() ):
-        nodes_in_column = columns_to_nodes[col_idx]
-        column_width    = column_widths[col_idx]
-        
-        debug( f'Column {col_idx}: Setting all nodes to width {column_width}' )
-        
-        for node_id in nodes_in_column:
-            node                = node_map[node_id]
-            original_width      = node['size'][0]
-            node_sizes[node_id] = [column_width, node['size'][1]]
-            
-            if original_width != column_width:
-                debug( f'  {node["type"]}({node_id}): {original_width} -> {column_width}' )
-    
-    debug( f'\n✓ Adjusted widths for {len(node_sizes)} nodes' )
     debug( '='*50 )
     debug( '' )
     
@@ -717,10 +908,34 @@ def detect_link_overlaps( graph_data ):
     # Build node map for quick lookup
     node_map = {node['id']: node for node in nodes}
     
+    # Sort links by length (shortest first)
+    def calculate_link_length( link ):
+        '''Calculate Euclidean distance between link endpoints'''
+        if link['origin_id'] not in node_map or link['target_id'] not in node_map:
+            return float( 'inf' )  # Push invalid links to the end
+        
+        origin_node = node_map[link['origin_id']]
+        target_node = node_map[link['target_id']]
+        
+        origin_x = origin_node['pos'][0] + origin_node['size'][0]
+        origin_y = origin_node['pos'][1] + 30 + (link['origin_slot'] * 20)
+        
+        target_x = target_node['pos'][0]
+        target_y = target_node['pos'][1] + 30 + (link['target_slot'] * 20)
+        
+        dx = target_x - origin_x
+        dy = target_y - origin_y
+        
+        return (dx * dx + dy * dy) ** 0.5  # Euclidean distance
+    
+    sorted_links = sorted( links, key=calculate_link_length )
+    
+    debug( f'\n✓ Processing links by length (shortest first)' )
+    
     overlaps = []
     
-    # Check each link
-    for link in links:
+    # Check each link (now in order of length)
+    for link in sorted_links:
         origin_id = link['origin_id']
         target_id = link['target_id']
         
@@ -793,9 +1008,13 @@ def detect_link_overlaps( graph_data ):
     
     debug( f'\n✓ Found {len( overlaps )} links with overlaps:' )
     
-    # Track cumulative offsets for links going up or down
-    up_offset   = 50  # First link up starts at 50
-    down_offset = 50  # First link down starts at 50
+    # Track offsets and column usage for links going up or down
+    # Each entry: (offset_value, set_of_column_x_positions)
+    up_offsets = []  # List of (offset, column_set) tuples for upward links
+    down_offsets = []  # List of (offset, column_set) tuples for downward links
+    
+    base_offset = 50
+    offset_increment = 20
     
     # Step 2: Determine reroute direction for each overlapping link
     for overlap in overlaps:
@@ -816,8 +1035,27 @@ def detect_link_overlaps( graph_data ):
         min_x = min( origin_x, target_x)
         max_x = max( origin_x, target_x )
         
+        # Collect all column X positions this link passes through
+        link_columns = set()
+        for node in nodes:
+            node_id = node['id']
+            
+            # Skip the nodes this link connects to
+            if node_id == origin_id or node_id == target_id:
+                continue
+            
+            node_x = node['pos'][0]
+            node_w = node['size'][0]
+            node_right = node_x + node_w
+            
+            # Check if this node is horizontally between the origin and target
+            if node_right < min_x or node_x > max_x:
+                continue
+            
+            # Add this column position to the set
+            link_columns.add( node_x )
+        
         # Find highest and lowest nodes in ALL columns the link passes through
-        # Not just the ones it directly overlaps
         highest_node_top   = None
         lowest_node_bottom = None
         highest_node_id    = None
@@ -839,7 +1077,6 @@ def detect_link_overlaps( graph_data ):
             
             # Check if this node is horizontally between the origin and target
             if node_right < min_x or node_x > max_x:
-                # Node is completely outside the horizontal range
                 continue
             
             # This node is in a column that the link passes through
@@ -856,30 +1093,76 @@ def detect_link_overlaps( graph_data ):
                 lowest_node_id     = node_id
                 lowest_node_type   = node['type']
         
-        # Calculate vertical distances for routing above or below
-        # For routing UP: need to clear the highest node's top
-        # Distance = how far up from the HIGHER of the two endpoints
-        higher_y = max( origin_y, target_y )
-        lower_y = min( origin_y, target_y )
+        # Calculate total vertical travel distance for routing above or below
+        # We need to check what the actual reroute Y position would be with each offset option
+        # and calculate the total distance from both endpoints
         
-        # Distance to route above highest node
-        up_distance = higher_y - highest_node_top if highest_node_top < higher_y else 0
+        # For routing UP: find smallest available offset
+        potential_up_offset = None
+        for offset_value, used_columns in up_offsets:
+            if not link_columns.intersection( used_columns ):
+                potential_up_offset = offset_value
+                break
+        if potential_up_offset is None:
+            potential_up_offset = base_offset + (len( up_offsets ) * offset_increment)
         
-        # Distance to route below lowest node
-        down_distance = lowest_node_bottom - lower_y if lowest_node_bottom > lower_y else 0
+        potential_up_y = highest_node_top - potential_up_offset
+        up_distance = abs( origin_y - potential_up_y ) + abs( target_y - potential_up_y )
         
-        # Determine which path requires less vertical movement
+        # For routing DOWN: find smallest available offset
+        potential_down_offset = None
+        for offset_value, used_columns in down_offsets:
+            if not link_columns.intersection( used_columns ):
+                potential_down_offset = offset_value
+                break
+        if potential_down_offset is None:
+            potential_down_offset = base_offset + (len( down_offsets ) * offset_increment)
+        
+        potential_down_y = lowest_node_bottom + potential_down_offset
+        down_distance = abs( origin_y - potential_down_y ) + abs( target_y - potential_down_y )
+        
+        # Determine which path requires less total vertical movement
         if up_distance < down_distance:
             reroute_direction = 'up'
-            # Place above the highest node using current up_offset
-            reroute_y = highest_node_top - up_offset
-            up_offset += 20  # Increase offset for next link going up
+            
+            # Use the offset we already calculated
+            chosen_offset = potential_up_offset
+            
+            # Find or create the offset level
+            offset_found = False
+            for offset_value, used_columns in up_offsets:
+                if offset_value == chosen_offset:
+                    # Add this link's columns to this offset level
+                    used_columns.update( link_columns )
+                    offset_found = True
+                    break
+            
+            if not offset_found:
+                # Create new offset level
+                up_offsets.append( (chosen_offset, link_columns.copy()) )
+            
+            reroute_y = highest_node_top - chosen_offset
 
         else:
             reroute_direction = 'down'
-            # Place below the lowest node using current down_offset
-            reroute_y = lowest_node_bottom + down_offset
-            down_offset += 20  # Increase offset for next link going down
+            
+            # Use the offset we already calculated
+            chosen_offset = potential_down_offset
+            
+            # Find or create the offset level
+            offset_found = False
+            for offset_value, used_columns in down_offsets:
+                if offset_value == chosen_offset:
+                    # Add this link's columns to this offset level
+                    used_columns.update( link_columns )
+                    offset_found = True
+                    break
+            
+            if not offset_found:
+                # Create new offset level
+                down_offsets.append( (chosen_offset, link_columns.copy()) )
+            
+            reroute_y = lowest_node_bottom + chosen_offset
         
         # Calculate horizontal positions for reroutes
         # First reroute: at the start of the first column after the starting node
@@ -899,8 +1182,8 @@ def detect_link_overlaps( graph_data ):
         overlap['highest_node_top']  = highest_node_top
         overlap['highest_node_id']   = highest_node_id
 
-        debug( f'    → Reroute 1 position: {reroute1_pos}' )
-        debug( f'    → Reroute 2 position: {reroute2_pos}' )
+        debug( f'    → Reroute 1 position: {reroute1_pos}', 2 )
+        debug( f'    → Reroute 2 position: {reroute2_pos}', 2 )
 
         overlap['highest_node_type']  = highest_node_type
         overlap['lowest_node_bottom'] = lowest_node_bottom
@@ -911,24 +1194,23 @@ def detect_link_overlaps( graph_data ):
         overlap['reroute_y']          = reroute_y
         
         # Print results
-        debug( f'\n  Link {overlap["link_id"]}: {overlap["origin_type"]}({overlap["origin_id"]}) -> {overlap["target_type"]}({overlap["target_id"]})' )
-        debug( f'    Overlaps {len(overlap["overlapping_nodes"])} node(s):' )
+        debug( f'\n  Link {overlap["link_id"]}: {overlap["origin_type"]}({overlap["origin_id"]}) -> {overlap["target_type"]}({overlap["target_id"]})', 2 )
+        debug( f'    Overlaps {len(overlap["overlapping_nodes"])} node(s):', 2 )
 
         for node_info in overlap['overlapping_nodes']:
-            debug( f'      - {node_info["node_type"]}({node_info["node_id"]}) at {node_info["node_pos"]}' )
-
-        debug( f'    Highest node: {highest_node_type}({highest_node_id}) top at Y={highest_node_top}' )
-        debug( f'    Lowest node: {lowest_node_type}({lowest_node_id}) bottom at Y={lowest_node_bottom}' )
-        debug( f'    Combined distance to top: {up_distance:.1f}' )
-        debug( f'    Combined distance to bottom: {down_distance:.1f}' )
-        debug( f'    → Reroute link {overlap["link_id"]} {reroute_direction.upper()}' )
+            debug( f'      - {node_info["node_type"]}({node_info["node_id"]}) at {node_info["node_pos"]}', 2 )
+        debug( f'    Highest node: {highest_node_type}({highest_node_id}) top at Y={highest_node_top}', 2 )
+        debug( f'    Lowest node: {lowest_node_type}({lowest_node_id}) bottom at Y={lowest_node_bottom}', 2 )
+        debug( f'    Combined distance to top: {up_distance:.1f}', 2 )
+        debug( f'    Combined distance to bottom: {down_distance:.1f}', 2 )
+        debug( f'    → Reroute link {overlap["link_id"]} {reroute_direction.upper()}', 2 )
     
-    debug( '\n' + '-'*50 )
-    debug( 'Reroute Summary:' )
+    debug( '\n' + '-'*50, 2 )
+    debug( 'Reroute Summary:', 2 )
     for overlap in overlaps:
-        debug( f'  Reroute link {overlap["link_id"]} {overlap["reroute_direction"]}' )
+        debug( f'  Reroute link {overlap["link_id"]} {overlap["reroute_direction"]}', 2 )
     
-    debug( '\n' + '='*50 )
+    debug( '\n' + '='*50, 2 )
     debug( '' )
     
     return {

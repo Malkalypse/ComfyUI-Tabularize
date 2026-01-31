@@ -220,10 +220,10 @@ async function rerouteLinks() {
 		// Remove all existing reroutes first
 		await removeAllReroutes();
 		
-		await debug( 'Collecting graph data for overlap detection...' );
+		await debug( 'Collecting graph data for overlap detection...', 2 );
 		const graphData = collectGraphData();
 		
-		await debug( 'Analyzing link overlaps...' );
+		await debug( 'Analyzing link overlaps...', 2 );
 		const response = await api.fetchApi( '/tabularize/action', {
 			method:  'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -238,16 +238,16 @@ async function rerouteLinks() {
 		}
 		
 		const overlaps = result.overlaps || [];
-		await debug( `✓ Analysis complete: Found ${overlaps.length} overlapping links` );
+		await debug( `✓ Analysis complete: Found ${overlaps.length} overlapping links`, 2 );
 		
 		if( overlaps.length > 0 ) {
-			await debug( 'Adding reroute points to links...' );
+			await debug( 'Adding reroute points to links...', 2 );
 			
 			// Process each overlapping link
 			for( const overlap of overlaps ) {
 				const linkId = overlap.link_id;
 				
-				await debug( `  Processing link ${linkId}...` );
+				await debug( `  Processing link ${linkId}...`, 2 );
 				
 				// Create reroutes at the positions provided by the backend
 				const positions = [
@@ -258,16 +258,16 @@ async function rerouteLinks() {
 				const createdReroutes = await createReroutesAtPositions( linkId, positions );
 				
 				if( createdReroutes.length > 0 ) {
-					await debug( `  ✓ Created ${createdReroutes.length} reroutes for link ${linkId}` );
+					await debug( `  ✓ Created ${createdReroutes.length} reroutes for link ${linkId}`, 2 );
 				} else {
 					await log( `  ✗ Failed to create reroutes for link ${linkId}` );
 				}
 			}
 			
-			await debug( `✓ Added reroute points for ${overlaps.length} links` );
+			await debug( `✓ Added reroute points for ${overlaps.length} links`, 2 );
 		}
 		
-		await debug( '✓ Reroute Links complete!' );
+		await debug( '✓ Reroute Links complete!', 2 );
 		
 	} catch( e ) {
 		await log( `Error: ${e.message}` );
