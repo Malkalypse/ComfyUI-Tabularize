@@ -13,6 +13,7 @@ Automatically arranges your workflow nodes into clean, organized columns based o
 - **Consistent Sizing**: Nodes in the same column are sized to match the widest node
 - **Smart Spacing**: Maintains consistent spacing between nodes vertically
 - **Preserved Connections**: All links remain intact during reorganization
+- **Automatic ID Cleanup**: Reindexes node and link IDs sequentially to match visual layout
 
 ### 🔗 Reroute Links
 Automatically detects and fixes overlapping links:
@@ -88,6 +89,13 @@ The extension uses a hybrid JavaScript/Python architecture:
 7. **Apply Uniform Spacing**: Positions columns with consistent 100px gaps
 8. **Vertical Sort**: Arranges nodes within columns based on port connections
 9. **Apply Layout**: Updates node positions on the canvas
+10. **Reroute Links**: Automatically detects and fixes overlapping links
+11. **Reindex Node IDs**: Sequentially renumbers nodes (1, 2, 3, ...) based on position
+    - Sorts left-to-right by column, top-to-bottom within columns
+    - Uses two-pass algorithm to prevent ID conflicts
+12. **Reindex Link IDs**: Sequentially renumbers links (1, 2, 3, ...) based on connections
+    - Sorts by origin node, origin slot, target node, target slot
+    - Maintains all node input/output references
 
 ### Reroute Algorithm
 

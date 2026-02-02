@@ -1,6 +1,6 @@
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
-import { log as logger, setDebug } from './utils.js';
+import { log as logger, setDebug, updateNodeID } from './utils.js';
 
 const DEBUG = 0;
 const PATH = '/tabularize/action';
@@ -133,6 +133,179 @@ function collectGraphData() {
 }
 
 
+/** Reindex node IDs sequentially based on position (left to right, top to bottom within columns) */
+async function reindexNodeIDs( positions ) {
+	await debug( 'Reindexing node IDs...' );
+	
+	const graph = app.graph;
+	
+	// Get all nodes that were positioned
+	const nodesToReindex = Object.keys( positions ).map( id => {
+		const node = graph.getNodeById( parseInt( id ) );
+		if( !node ) return null;
+		return {
+			node: node,
+			x: positions[id][0],
+			y: positions[id][1]
+		};
+	} ).filter( n => n !== null );
+	
+	if( nodesToReindex.length === 0 ) {
+		await debug( 'No nodes to reindex' );
+		return;
+	}
+	
+	// Sort by x position (column), then by y position (row within column)
+	nodesToReindex.sort( (a, b) => {
+		if( Math.abs( a.x - b.x ) < 10 ) { // Same column (within 10px tolerance)
+			return a.y - b.y; // Sort by y (top to bottom)
+		}
+		return a.x - b.x; // Sort by x (left to right)
+	} );
+	
+	// Find highest existing node ID to avoid conflicts
+	let maxId = 0;
+	for( const nodeEntry of graph._nodes ) {
+		if( nodeEntry && nodeEntry.id > maxId ) {
+			maxId = nodeEntry.id;
+		}
+	}
+	
+	// First pass: reindex to temporary high IDs to avoid conflicts
+	const tempStartId = maxId + 1;
+	await debug( `First pass: reindexing ${nodesToReindex.length} nodes starting from ${tempStartId}...` );
+	for( let i = 0; i < nodesToReindex.length; i++ ) {
+		const tempId = tempStartId + i;
+		updateNodeID( nodesToReindex[i].node, tempId );
+	}
+	
+	// Second pass: reindex to final sequential IDs starting from 1
+	await debug( `Second pass: reindexing to final IDs starting from 1...` );
+	for( let i = 0; i < nodesToReindex.length; i++ ) {
+		const finalId = i + 1;
+		updateNodeID( nodesToReindex[i].node, finalId );
+	}
+	
+	await debug( `✓ Reindexed ${nodesToReindex.length} nodes` );
+	graph.setDirtyCanvas( true, true );
+}
+
+
+/** Reindex link IDs sequentially based on origin node order and output slot */
+async function reindexLinkIDs() {
+	await debug( 'Reindexing link IDs...' );
+	
+	const graph = app.graph;
+	
+	// Get all links
+	const linksToReindex = [];
+	for( const [linkId, link] of graph.links.entries() ) {
+		if( link ) {
+			linksToReindex.push( link );
+		}
+	}
+	
+	if( linksToReindex.length === 0 ) {
+		await debug( 'No links to reindex' );
+		return;
+	}
+	
+	// Sort by origin node ID, then by origin slot, then by target node ID, then by target slot
+	linksToReindex.sort( (a, b) => {
+		if( a.origin_id !== b.origin_id ) {
+			return a.origin_id - b.origin_id;
+		}
+		if( a.origin_slot !== b.origin_slot ) {
+			return a.origin_slot - b.origin_slot;
+		}
+		if( a.target_id !== b.target_id ) {
+			return a.target_id - b.target_id;
+		}
+		return a.target_slot - b.target_slot;
+	} );
+	
+	// Find highest existing link ID to avoid conflicts
+	let maxId = 0;
+	for( const link of linksToReindex ) {
+		if( link.id > maxId ) {
+			maxId = link.id;
+		}
+	}
+	
+	// First pass: reindex to temporary high IDs to avoid conflicts
+	const tempStartId = maxId + 1;
+	await debug( `First pass: reindexing ${linksToReindex.length} links starting from ${tempStartId}...` );
+	for( let i = 0; i < linksToReindex.length; i++ ) {
+		const link = linksToReindex[i];
+		const oldId = link.id;
+		const tempId = tempStartId + i;
+		
+		// Update node references to this link ID
+		const originNode = graph.getNodeById( link.origin_id );
+		const targetNode = graph.getNodeById( link.target_id );
+		
+		if( originNode && originNode.outputs && originNode.outputs[link.origin_slot] ) {
+			const output = originNode.outputs[link.origin_slot];
+			if( output.links ) {
+				const linkIndex = output.links.indexOf( oldId );
+				if( linkIndex !== -1 ) {
+					output.links[linkIndex] = tempId;
+				}
+			}
+		}
+		
+		if( targetNode && targetNode.inputs && targetNode.inputs[link.target_slot] ) {
+			const input = targetNode.inputs[link.target_slot];
+			if( input.link === oldId ) {
+				input.link = tempId;
+			}
+		}
+		
+		// Remove old entry and add new one
+		graph.links.delete( oldId );
+		link.id = tempId;
+		graph.links.set( tempId, link );
+	}
+	
+	// Second pass: reindex to final sequential IDs starting from 1
+	await debug( `Second pass: reindexing to final IDs starting from 1...` );
+	for( let i = 0; i < linksToReindex.length; i++ ) {
+		const link = linksToReindex[i];
+		const oldId = link.id;
+		const finalId = i + 1;
+		
+		// Update node references to this link ID
+		const originNode = graph.getNodeById( link.origin_id );
+		const targetNode = graph.getNodeById( link.target_id );
+		
+		if( originNode && originNode.outputs && originNode.outputs[link.origin_slot] ) {
+			const output = originNode.outputs[link.origin_slot];
+			if( output.links ) {
+				const linkIndex = output.links.indexOf( oldId );
+				if( linkIndex !== -1 ) {
+					output.links[linkIndex] = finalId;
+				}
+			}
+		}
+		
+		if( targetNode && targetNode.inputs && targetNode.inputs[link.target_slot] ) {
+			const input = targetNode.inputs[link.target_slot];
+			if( input.link === oldId ) {
+				input.link = finalId;
+			}
+		}
+		
+		// Remove old entry and add new one
+		graph.links.delete( oldId );
+		link.id = finalId;
+		graph.links.set( finalId, link );
+	}
+	
+	await debug( `✓ Reindexed ${linksToReindex.length} links` );
+	graph.setDirtyCanvas( true, true );
+}
+
+
 /** Main organization function - sends data to Python */
 async function organizeNodes() {
 	try {
@@ -180,11 +353,14 @@ async function organizeNodes() {
 			
 			// Automatically reroute links after organizing
 			await rerouteLinks();
-		} else {
-			await debug( '✓ Processing complete (no position changes)' );
-		}
 		
-	} catch (e) {
+			// Reindex node IDs sequentially
+			await reindexNodeIDs( positions );
+			
+			// Reindex link IDs sequentially
+			await reindexLinkIDs();
+		}
+	} catch( e ) {
 		await log( `Error: ${e.message}` );
 		console.error( 'Tabularize error:', e );
 	}

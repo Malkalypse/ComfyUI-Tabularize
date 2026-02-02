@@ -5,6 +5,38 @@ All notable changes to ComfyUI-Tabularize will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-02
+
+### Added
+- Automatic node ID reindexing after organization
+  - Reindexes node IDs sequentially (1, 2, 3, ...) based on position
+  - Sorts left-to-right by column, then top-to-bottom within columns
+  - Uses two-pass algorithm to avoid ID conflicts during reindexing
+  - Automatically updates all link references to maintain connections
+- Automatic link ID reindexing after organization
+  - Reindexes link IDs sequentially (1, 2, 3, ...) based on connection order
+  - Sorts by origin node ID, then origin slot, then target node ID, then target slot
+  - Uses two-pass algorithm to avoid ID conflicts during reindexing
+  - Updates both graph links map and node input/output references
+- Shared utility function `updateNodeID()` for consistent node ID updates
+  - Exported from `utils.js` for reuse across multiple extensions
+  - Handles graph registry updates and link reference updates
+
+### Changed
+- Organization workflow now includes automatic ID cleanup
+  - Order: organize positions → reroute links → reindex nodes → reindex links
+  - Results in clean, sequential IDs that match the visual layout
+- Link reindexing ensures all node connections remain intact
+  - Updates origin node output slot link arrays
+  - Updates target node input slot link references
+
+### Technical Details
+- Two-pass reindexing strategy prevents ID collisions
+  - First pass: reindex to temporary high IDs (max + 1, max + 2, ...)
+  - Second pass: reindex to final sequential IDs (1, 2, 3, ...)
+- Column detection uses 10px tolerance for grouping nodes
+- Link sorting provides deterministic ordering for reproducible results
+
 ## [0.2.0] - 2026-01-31
 
 ### Added
@@ -62,5 +94,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Coordinate-based collision detection for link overlap analysis
 - Python and JavaScript logging integration for debugging
 
+[0.3.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v0.1.0

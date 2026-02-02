@@ -3,7 +3,7 @@
 # Import api module to register routes
 from . import api  # noqa: F401
 
-__version__ = '0.2.0'
+__version__ = '0.3.0'
 
 # Required for ComfyUI to load this custom node package
 NODE_CLASS_MAPPINGS = {}
