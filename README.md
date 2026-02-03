@@ -6,6 +6,9 @@ Automatic node column organization and link routing for ComfyUI workflows.
 
 ### 🔲 Organize Columns
 Automatically arranges your workflow nodes into clean, organized columns based on their connections:
+- **Selected Nodes Support**: Organize only selected nodes while leaving others unchanged
+- **Smart Positioning**: Selected nodes maintain their position; full workflows start at [0, 0]
+- **Size Normalization**: Automatically rounds node sizes to nearest 10 units for grid alignment
 - **Chain Detection**: Identifies linear node chains and organizes them horizontally
 - **Column Layout**: Groups nodes into vertical columns based on their depth in the graph
 - **Leftward Connection Prevention**: Automatically detects and corrects backward-flowing connections
@@ -13,7 +16,7 @@ Automatically arranges your workflow nodes into clean, organized columns based o
 - **Consistent Sizing**: Nodes in the same column are sized to match the widest node
 - **Smart Spacing**: Maintains consistent spacing between nodes vertically
 - **Preserved Connections**: All links remain intact during reorganization
-- **Automatic ID Cleanup**: Reindexes node and link IDs sequentially to match visual layout
+- **Conditional ID Cleanup**: Reindexes IDs for full workflows; preserves IDs for selected nodes
 
 ### 🔗 Reroute Links
 Automatically detects and fixes overlapping links:
@@ -39,10 +42,20 @@ Automatically detects and fixes overlapping links:
 
 ### Organize Columns
 
-1. Right-click on the canvas background
+**Organize All Nodes:**
+1. Right-click on the canvas background (with no nodes selected)
 2. Select **🔲 Tabularize - Organize Columns** from the context menu
-3. Your nodes will be automatically reorganized into columns
-4. Links will automatically be rerouted to avoid overlaps
+3. All workflow nodes will be reorganized into columns starting at position [0, 0]
+4. Node and link IDs will be reindexed sequentially
+5. Links will automatically be rerouted to avoid overlaps
+
+**Organize Selected Nodes:**
+1. Select one or more nodes you want to organize
+2. Right-click on the canvas background
+3. Select **🔲 Tabularize - Organize Columns** from the context menu
+4. Only the selected nodes will be reorganized, maintaining their original top-left position
+5. Node and link IDs are preserved
+6. Unselected nodes remain unchanged
 
 ### Reroute Links
 
@@ -76,26 +89,34 @@ The extension uses a hybrid JavaScript/Python architecture:
 
 ### Organization Algorithm
 
-1. **Build Graph**: Creates parent/child relationship mapping from node connections
-2. **Find Chains**: Identifies linear sequences of connected nodes
-3. **Assign Columns**: Groups nodes by their depth in the dependency graph
-4. **Fix Leftward Connections**: Iteratively detects and corrects backward-flowing links
+1. **Check Selection**: Detects if any nodes are selected to determine organization scope
+2. **Normalize Sizes**: Rounds all node dimensions up to the nearest 10 units
+3. **Filter Nodes**: If nodes are selected, filters to only those nodes and their interconnections
+4. **Build Graph**: Creates parent/child relationship mapping from node connections
+5. **Find Chains**: Identifies linear sequences of connected nodes
+6. **Assign Columns**: Groups nodes by their depth in the dependency graph
+7. **Fix Leftward Connections**: Iteratively detects and corrects backward-flowing links
    - Analyzes all connections to find those flowing leftward
    - Moves target nodes to columns after their origins
    - Recalculates column widths after each adjustment
    - Runs up to 20 iterations to resolve complex dependencies
-5. **Rebuild Columns**: Removes empty columns and recalculates widths
-6. **Match Widths**: Resizes nodes to match their column's maximum width
-7. **Apply Uniform Spacing**: Positions columns with consistent 100px gaps
-8. **Vertical Sort**: Arranges nodes within columns based on port connections
-9. **Apply Layout**: Updates node positions on the canvas
-10. **Reroute Links**: Automatically detects and fixes overlapping links
-11. **Reindex Node IDs**: Sequentially renumbers nodes (1, 2, 3, ...) based on position
+8. **Rebuild Columns**: Removes empty columns and recalculates widths
+9. **Match Widths**: Resizes nodes to match their column's maximum width
+10. **Apply Uniform Spacing**: Positions columns with consistent 100px gaps
+11. **Vertical Sort**: Arranges nodes within columns based on port connections
+12. **Apply Position Offset**: Aligns organized nodes to target position
+    - Selected nodes: Maintains original top-left corner position
+    - All nodes: Aligns workflow to visual position [0, 0]
+13. **Apply Layout**: Updates node positions on the canvas
+14. **Reroute Links**: Automatically detects and fixes overlapping links
+15. **Reindex Node IDs** (full workflow only): Sequentially renumbers nodes (1, 2, 3, ...) based on position
     - Sorts left-to-right by column, top-to-bottom within columns
     - Uses two-pass algorithm to prevent ID conflicts
-12. **Reindex Link IDs**: Sequentially renumbers links (1, 2, 3, ...) based on connections
+    - Skipped when organizing selected nodes to preserve references
+16. **Reindex Link IDs** (full workflow only): Sequentially renumbers links (1, 2, 3, ...) based on connections
     - Sorts by origin node, origin slot, target node, target slot
     - Maintains all node input/output references
+    - Skipped when organizing selected nodes to preserve references
 
 ### Reroute Algorithm
 

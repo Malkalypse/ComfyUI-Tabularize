@@ -7,6 +7,56 @@ from .utils import set_debug
 DEBUG_LEVEL = 1
 debug = set_debug( DEBUG_LEVEL )
 
+# Title bar height constants
+NODE_TITLE_BAR_HEIGHT = 30
+GROUP_TITLE_BAR_HEIGHT = 34
+
+
+def get_node_bounds( node ):
+	'''
+	Get actual bounds of a node including its title bar.
+	
+	Args:
+		node: dict with 'pos' [x, y] and 'size' [width, height]
+		
+	Returns:
+		dict with keys: left, right, top, bottom, width, height
+	'''
+	pos_x, pos_y = node['pos']
+	size_w, size_h = node['size']
+	
+	return {
+		'left': pos_x,
+		'right': pos_x + size_w,
+		'top': pos_y - NODE_TITLE_BAR_HEIGHT,
+		'bottom': pos_y + size_h,
+		'width': size_w,
+		'height': size_h + NODE_TITLE_BAR_HEIGHT
+	}
+
+
+def get_group_bounds( group ):
+	'''
+	Get actual bounds of a group including its title bar.
+	
+	Args:
+		group: dict with 'pos' [x, y] and 'size' [width, height]
+		
+	Returns:
+		dict with keys: left, right, top, bottom, width, height
+	'''
+	pos_x, pos_y = group['pos']
+	size_w, size_h = group['size']
+	
+	return {
+		'left': pos_x,
+		'right': pos_x + size_w,
+		'top': pos_y - GROUP_TITLE_BAR_HEIGHT,
+		'bottom': pos_y + size_h,
+		'width': size_w,
+		'height': size_h + GROUP_TITLE_BAR_HEIGHT
+	}
+
 
 def line_segment_intersects_rect(
     x1, y1,
@@ -202,8 +252,42 @@ def organize_nodes( graph_data ):
     
     all_nodes = graph_data.get( 'nodes', [] )
     links = graph_data.get( 'links', [] )
+    selected_node_ids = graph_data.get( 'selectedNodeIds', None )
     
-    debug( f'✓ Received {len( all_nodes )} total nodes and {len( links )} links' )
+    # Calculate starting position based on selection
+    # Use bounds (including title bar) for visual positioning
+    target_start_x = 0
+    target_start_y = 0
+    
+    # If specific nodes are selected, only process those
+    if selected_node_ids:
+        debug( f'✓ Organizing {len( selected_node_ids )} selected nodes' )
+        selected_node_ids_set = set( selected_node_ids )
+        
+        # Find the top-left corner of selected nodes using bounds (including title bar)
+        selected_nodes_list = [node for node in all_nodes if node['id'] in selected_node_ids_set]
+        if selected_nodes_list:
+            # Get bounds for all selected nodes
+            bounds_list = [get_node_bounds(node) for node in selected_nodes_list]
+            target_start_x = min( bounds['left'] for bounds in bounds_list )
+            target_start_y = min( bounds['top'] for bounds in bounds_list )
+            debug( f'✓ Selected nodes original top-left corner (with title bar): ({target_start_x}, {target_start_y})' )
+        
+        # Filter nodes to only selected ones
+        all_nodes = selected_nodes_list
+        
+        # Filter links to only those between selected nodes
+        links = [link for link in links 
+                if link['origin_id'] in selected_node_ids_set and link['target_id'] in selected_node_ids_set]
+        
+        debug( f'✓ Filtered to {len( all_nodes )} nodes and {len( links )} links between selected nodes' )
+    else:
+        debug( f'✓ Received {len( all_nodes )} total nodes and {len( links )} links' )
+        # For all nodes, target visual top-left at (0, 0) including title bar
+        # This means node pos should be at (0, NODE_TITLE_BAR_HEIGHT)
+        target_start_x = 0
+        target_start_y = 0
+        debug( f'✓ Organizing all nodes starting from visual (0, 0)' )
     
     # Filter to only workflow nodes (nodes that have inputs or outputs with connections)
     # Exclude notes, text, groups, and other non-workflow elements
@@ -234,7 +318,35 @@ def organize_nodes( graph_data ):
     
     if len( components ) == 1:
         # Single component - organize normally
-        return organize_single_component( nodes, links, 0 )
+        result = organize_single_component( nodes, links, 0 )
+        
+        # Apply starting position offset using bounds (including title bar)
+        if result['status'] == 'success' and result['positions']:
+            # Find current top-left corner using bounds (visual position with title bar)
+            current_bounds_list = []
+            for node_id, pos in result['positions'].items():
+                # Reconstruct node dict with updated position for bounds calculation
+                node = next((n for n in nodes if n['id'] == node_id), None)
+                if node:
+                    temp_node = node.copy()
+                    temp_node['pos'] = pos
+                    current_bounds_list.append(get_node_bounds(temp_node))
+            
+            current_min_x = min( bounds['left'] for bounds in current_bounds_list )
+            current_min_y = min( bounds['top'] for bounds in current_bounds_list )
+            
+            # Calculate offset to move visual top-left to target
+            offset_x = target_start_x - current_min_x
+            offset_y = target_start_y - current_min_y
+            
+            # Apply offset to all positions
+            for node_id in result['positions']:
+                result['positions'][node_id][0] += offset_x
+                result['positions'][node_id][1] += offset_y
+            
+            debug( f'✓ Applied offset: ({offset_x}, {offset_y}) to align visual corner to target ({target_start_x}, {target_start_y})' )
+        
+        return result
     
     else:
         # Multiple components - organize each separately and stack vertically
@@ -297,6 +409,33 @@ def organize_nodes( graph_data ):
             current_y_offset += comp['height'] + component_spacing
         
         debug( f'\n✓ Stacked {len(component_results)} components' )
+        
+        # Apply starting position offset using bounds (including title bar)
+        if all_positions:
+            # Find current top-left corner using bounds (visual position with title bar)
+            current_bounds_list = []
+            for node_id, pos in all_positions.items():
+                # Reconstruct node dict with updated position for bounds calculation
+                node = next((n for n in nodes if n['id'] == node_id), None)
+                if node:
+                    temp_node = node.copy()
+                    temp_node['pos'] = pos
+                    current_bounds_list.append(get_node_bounds(temp_node))
+            
+            current_min_x = min( bounds['left'] for bounds in current_bounds_list )
+            current_min_y = min( bounds['top'] for bounds in current_bounds_list )
+            
+            # Calculate offset to move visual top-left to target
+            offset_x = target_start_x - current_min_x
+            offset_y = target_start_y - current_min_y
+            
+            # Apply offset to all positions
+            for node_id in all_positions:
+                all_positions[node_id][0] += offset_x
+                all_positions[node_id][1] += offset_y
+            
+            debug( f'✓ Applied offset: ({offset_x}, {offset_y}) to align visual corner to target ({target_start_x}, {target_start_y})' )
+        
         debug( '='*50 )
         debug( '' )
         
@@ -917,11 +1056,15 @@ def detect_link_overlaps( graph_data ):
         origin_node = node_map[link['origin_id']]
         target_node = node_map[link['target_id']]
         
-        origin_x = origin_node['pos'][0] + origin_node['size'][0]
-        origin_y = origin_node['pos'][1] + 30 + (link['origin_slot'] * 20)
+        # Get actual node bounds including title bars
+        origin_bounds = get_node_bounds( origin_node )
+        target_bounds = get_node_bounds( target_node )
         
-        target_x = target_node['pos'][0]
-        target_y = target_node['pos'][1] + 30 + (link['target_slot'] * 20)
+        origin_x = origin_bounds['right']
+        origin_y = origin_bounds['top'] + NODE_TITLE_BAR_HEIGHT + (link['origin_slot'] * 20)
+        
+        target_x = target_bounds['left']
+        target_y = target_bounds['top'] + NODE_TITLE_BAR_HEIGHT + (link['target_slot'] * 20)
         
         dx = target_x - origin_x
         dy = target_y - origin_y
@@ -929,8 +1072,6 @@ def detect_link_overlaps( graph_data ):
         return (dx * dx + dy * dy) ** 0.5  # Euclidean distance
     
     sorted_links = sorted( links, key=calculate_link_length )
-    
-    debug( f'\n✓ Processing links by length (shortest first)' )
     
     overlaps = []
     
@@ -945,14 +1086,18 @@ def detect_link_overlaps( graph_data ):
         origin_node = node_map[origin_id]
         target_node = node_map[target_id]
         
+        # Get actual node bounds including title bars
+        origin_bounds = get_node_bounds( origin_node )
+        target_bounds = get_node_bounds( target_node )
+        
         # Get link endpoints (treating as straight line for now)
         # Origin point: output port on origin node (right side)
-        origin_x = origin_node['pos'][0] + origin_node['size'][0]
-        origin_y = origin_node['pos'][1] + 30 + (link['origin_slot'] * 20)  # Approximate port position
+        origin_x = origin_bounds['right']
+        origin_y = origin_bounds['top'] + NODE_TITLE_BAR_HEIGHT + (link['origin_slot'] * 20)  # Port position
         
         # Target point: input port on target node (left side)
-        target_x = target_node['pos'][0]
-        target_y = target_node['pos'][1] + 30 + (link['target_slot'] * 20)  # Approximate port position
+        target_x = target_bounds['left']
+        target_y = target_bounds['top'] + NODE_TITLE_BAR_HEIGHT + (link['target_slot'] * 20)  # Port position
         
         # Determine the horizontal range between origin and target
         min_x = min( origin_x, target_x )

@@ -5,6 +5,45 @@ All notable changes to ComfyUI-Tabularize will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-03
+
+### Added
+- Selected nodes organization support
+  - When nodes are selected, only those nodes are organized
+  - Selected nodes maintain their original top-left corner position after organization
+  - Unselected nodes remain unchanged and unaffected
+  - Node and link ID reindexing is skipped when organizing selected nodes (preserves IDs)
+- Automatic node size normalization
+  - All node sizes are rounded up to the nearest 10 units before organization
+  - Example: A node with size [191, 245] becomes [200, 250]
+  - Ensures consistent grid alignment and cleaner layouts
+- Smart positioning based on organization scope
+  - Selected nodes: Organized nodes maintain their original visual top-left corner
+  - All nodes: Organized workflow starts at visual position [0, 0] (including title bar)
+  - Uses node bounds (including title bars) for accurate visual positioning
+- Shared utility functions
+  - `getNodeBounds()` exported from `utils.js` for consistent node boundary calculations
+  - Includes NODE_TITLE_BAR_HEIGHT constant for accurate positioning
+
+### Changed
+- ID reindexing now conditional based on organization scope
+  - Full workflow organization: IDs are reindexed sequentially as before
+  - Selected nodes organization: IDs are preserved to maintain references
+- Position calculation improved to use visual bounds
+  - Accounts for node title bar height in all position calculations
+  - Ensures organized workflows align properly at [0, 0] without offset
+- Backend filtering for selected nodes
+  - Python backend receives `selectedNodeIds` array when nodes are selected
+  - Filters nodes and links to only process selected subset
+  - Returns positions only for the selected nodes
+
+### Technical Details
+- Selection detection in JavaScript checks `node.selected` property
+- Frontend rounds node sizes before collecting graph data
+- Backend calculates target position using `get_node_bounds()` for accurate corner detection
+- Offset calculation aligns visual corners (including title bars) to target position
+- Two-mode operation: full workflow vs. selected nodes subset
+
 ## [0.3.0] - 2026-02-02
 
 ### Added
@@ -94,6 +133,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Coordinate-based collision detection for link overlap analysis
 - Python and JavaScript logging integration for debugging
 
+[0.4.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v0.2.0
 [0.1.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v0.1.0

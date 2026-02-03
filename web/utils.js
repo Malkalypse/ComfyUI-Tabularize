@@ -1,5 +1,24 @@
 import { api } from '../../scripts/api.js';
 
+// Title bar height constant
+const NODE_TITLE_BAR_HEIGHT = 30;
+
+/**
+ * Get actual bounds of a node including its title bar
+ * @param {Object} node - Node with pos [x, y] and size [width, height]
+ * @returns {Object} { left, right, top, bottom, width, height }
+ */
+export function getNodeBounds( node ) {
+	const left		= node.pos[0];
+	const right		= node.pos[0] + node.size[0];
+	const top			= node.pos[1] - NODE_TITLE_BAR_HEIGHT;
+	const bottom	= node.pos[1] + node.size[1];
+	const width		= node.size[0];
+	const height	= node.size[1] + NODE_TITLE_BAR_HEIGHT;
+	
+	return { left, right, top, bottom, width, height };
+}
+
 // Helper function to log to Python console
 export async function log( message, path ) {
 	try {

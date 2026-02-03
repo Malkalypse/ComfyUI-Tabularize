@@ -1,12 +1,13 @@
 import { app } from '../../scripts/app.js';
 import { api } from '../../scripts/api.js';
-import { log as logger, setDebug, updateNodeID } from './utils.js';
+import { log as logger, setDebug, updateNodeID, getNodeBounds } from './utils.js';
 
 const DEBUG = 0;
 const PATH = '/tabularize/action';
 
 const log = (msg) => logger( msg, PATH );
 const debug = setDebug( log, DEBUG );
+
 
 /** Create multiple reroutes for a link at specified positions
  * @param {number} linkId - The ID of the link to add reroutes to
@@ -309,9 +310,31 @@ async function reindexLinkIDs() {
 /** Main organization function - sends data to Python */
 async function organizeNodes() {
 	try {
+		// Check if any nodes are selected
+		const selectedNodes = app.graph._nodes.filter( node => node && node.selected );
+		const hasSelection = selectedNodes.length > 0;
+		
+		if( hasSelection ) {
+			await debug( `Organizing ${selectedNodes.length} selected nodes...` );
+		}
+		
+		// Round up node sizes to the nearest 10 units
+		const nodesToRound = hasSelection ? selectedNodes : app.graph._nodes;
+		for( const node of nodesToRound ) {
+			if( node && node.size ) {
+				node.size[0] = Math.ceil( node.size[0] / 10 ) * 10;
+				node.size[1] = Math.ceil( node.size[1] / 10 ) * 10;
+			}
+		}
+		
 		await debug( 'Collecting graph data...' );
 		const graphData = collectGraphData();
 		
+		// If nodes are selected, include only those node IDs
+		if( hasSelection ) {
+			graphData.selectedNodeIds = selectedNodes.map( node => node.id );
+		}
+
 		await debug( 'Sending to Python for processing...' );
 
 		const response = await api.fetchApi( '/tabularize/action', {
@@ -353,12 +376,12 @@ async function organizeNodes() {
 			
 			// Automatically reroute links after organizing
 			await rerouteLinks();
-		
-			// Reindex node IDs sequentially
-			await reindexNodeIDs( positions );
-			
-			// Reindex link IDs sequentially
-			await reindexLinkIDs();
+
+			// Only reindex IDs when organizing all nodes (not when organizing a selection)
+			if( !hasSelection ) {
+				await reindexNodeIDs( positions );	// reindex node IDs sequentially
+				await reindexLinkIDs();							// reindex link IDs sequentially
+			}
 		}
 	} catch( e ) {
 		await log( `Error: ${e.message}` );
