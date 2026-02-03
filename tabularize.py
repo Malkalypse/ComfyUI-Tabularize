@@ -1002,6 +1002,94 @@ def organize_single_component( nodes, links, start_y ):
     }
 
 
+def find_horizontal_gaps( nodes, origin_x, origin_y, target_x, target_y, origin_id, target_id ):
+    '''
+    Find horizontal gaps between nodes that a link could pass through.
+    
+    Args:
+        nodes: List of all nodes
+        origin_x, origin_y: Origin point coordinates
+        target_x, target_y: Target point coordinates
+        origin_id, target_id: IDs of origin and target nodes to skip
+        
+    Returns:
+        List of viable gap dictionaries with 'y', 'distance' keys
+    '''
+    min_x = min( origin_x, target_x )
+    max_x = max( origin_x, target_x )
+    
+    # Find all nodes in the horizontal range
+    nodes_in_range = []
+    for node in nodes:
+        if node['id'] == origin_id or node['id'] == target_id:
+            continue
+        
+        node_x = node['pos'][0]
+        node_w = node['size'][0]
+        node_right = node_x + node_w
+        
+        # Check if node is in horizontal range
+        if node_right < min_x or node_x > max_x:
+            continue
+        
+        node_bounds = get_node_bounds( node )
+        nodes_in_range.append( {
+            'id': node['id'],
+            'top': node_bounds['top'],
+            'bottom': node_bounds['bottom'],
+            'left': node_bounds['left'],
+            'right': node_bounds['right']
+        } )
+    
+    if not nodes_in_range:
+        return []
+    
+    # Sort nodes by their top position
+    nodes_in_range.sort( key=lambda n: n['top'] )
+    
+    # Find gaps between consecutive nodes
+    gaps = []
+    min_gap_height = 20  # Minimum gap height to be usable (allows for reroute with some clearance)
+    
+    for i in range( len( nodes_in_range ) - 1 ):
+        upper_node = nodes_in_range[i]
+        lower_node = nodes_in_range[i + 1]
+        
+        gap_top = upper_node['bottom']
+        gap_bottom = lower_node['top']
+        gap_height = gap_bottom - gap_top
+        
+        if gap_height >= min_gap_height:
+            # Gap is large enough - calculate Y position at vertical midpoint of gap
+            gap_y = (gap_top + gap_bottom) / 2
+            
+            # Verify that a horizontal line at gap_y doesn't intersect ANY node in the range
+            # (not just the two nodes defining the gap)
+            path_is_clear = True
+            for node_bounds in nodes_in_range:
+                # Check if this node's vertical bounds include gap_y
+                if node_bounds['top'] <= gap_y <= node_bounds['bottom']:
+                    # This node would be intersected by the horizontal path
+                    path_is_clear = False
+                    break
+            
+            if not path_is_clear:
+                # Skip this gap - horizontal path would intersect a node
+                continue
+            
+            # Calculate total vertical distance from both endpoints
+            distance = abs( origin_y - gap_y ) + abs( target_y - gap_y )
+            
+            gaps.append( {
+                'y': gap_y,
+                'distance': distance,
+                'gap_height': gap_height,
+                'between_nodes': [upper_node['id'], lower_node['id']]
+            } )
+    
+    return gaps
+
+
 def detect_link_overlaps( graph_data ):
     '''
     Detect which links pass behind nodes (overlap detection).
@@ -1266,12 +1354,39 @@ def detect_link_overlaps( graph_data ):
         potential_down_y = lowest_node_bottom + potential_down_offset
         down_distance = abs( origin_y - potential_down_y ) + abs( target_y - potential_down_y )
         
+        # Check for horizontal gaps between nodes
+        horizontal_gaps = find_horizontal_gaps( 
+            nodes, origin_x, origin_y, target_x, target_y, origin_id, target_id 
+        )
+        
+        # Find the best routing option (up, down, or through a gap)
+        best_option = 'up' if up_distance < down_distance else 'down'
+        best_distance = min( up_distance, down_distance )
+        best_y = potential_up_y if best_option == 'up' else potential_down_y
+        best_offset = potential_up_offset if best_option == 'up' else potential_down_offset
+        
+        debug( f'    Comparing routing options for link {overlap["link_id"]}:', 2 )
+        debug( f'      Up: distance={up_distance:.1f}, y={potential_up_y:.1f}', 2 )
+        debug( f'      Down: distance={down_distance:.1f}, y={potential_down_y:.1f}', 2 )
+        
+        # Check if any gap offers a shorter path
+        for gap in horizontal_gaps:
+            debug( f'      Gap: distance={gap["distance"]:.1f}, y={gap["y"]:.1f}, height={gap["gap_height"]:.1f}', 2 )
+            if gap['distance'] < best_distance:
+                best_option = 'gap'
+                best_distance = gap['distance']
+                best_y = gap['y']
+                best_offset = None  # Gaps don't use offset tracking
+                gap['selected'] = True  # Mark this gap as chosen
+        
+        debug( f'      → Selected: {best_option.upper()} with distance={best_distance:.1f}', 2 )
+        
         # Determine which path requires less total vertical movement
-        if up_distance < down_distance:
+        if best_option == 'up':
             reroute_direction = 'up'
             
             # Use the offset we already calculated
-            chosen_offset = potential_up_offset
+            chosen_offset = best_offset
             
             # Find or create the offset level
             offset_found = False
@@ -1286,13 +1401,13 @@ def detect_link_overlaps( graph_data ):
                 # Create new offset level
                 up_offsets.append( (chosen_offset, link_columns.copy()) )
             
-            reroute_y = highest_node_top - chosen_offset
+            reroute_y = best_y
 
-        else:
+        elif best_option == 'down':
             reroute_direction = 'down'
             
             # Use the offset we already calculated
-            chosen_offset = potential_down_offset
+            chosen_offset = best_offset
             
             # Find or create the offset level
             offset_found = False
@@ -1307,7 +1422,12 @@ def detect_link_overlaps( graph_data ):
                 # Create new offset level
                 down_offsets.append( (chosen_offset, link_columns.copy()) )
             
-            reroute_y = lowest_node_bottom + chosen_offset
+            reroute_y = best_y
+        
+        else:  # best_option == 'gap'
+            reroute_direction = 'gap'
+            reroute_y = best_y
+            chosen_offset = None  # Gaps don't use offsets
         
         # Calculate horizontal positions for reroutes
         # First reroute: at the start of the first column after the starting node
@@ -1348,6 +1468,13 @@ def detect_link_overlaps( graph_data ):
         debug( f'    Lowest node: {lowest_node_type}({lowest_node_id}) bottom at Y={lowest_node_bottom}', 2 )
         debug( f'    Combined distance to top: {up_distance:.1f}', 2 )
         debug( f'    Combined distance to bottom: {down_distance:.1f}', 2 )
+        if horizontal_gaps:
+            debug( f'    Found {len(horizontal_gaps)} horizontal gap(s):', 2 )
+            for gap in horizontal_gaps:
+                if gap.get('selected'):
+                    debug( f'      - Gap at Y={gap["y"]:.1f}, distance={gap["distance"]:.1f} ← SELECTED', 2 )
+                else:
+                    debug( f'      - Gap at Y={gap["y"]:.1f}, distance={gap["distance"]:.1f}', 2 )
         debug( f'    → Reroute link {overlap["link_id"]} {reroute_direction.upper()}', 2 )
     
     debug( '\n' + '-'*50, 2 )

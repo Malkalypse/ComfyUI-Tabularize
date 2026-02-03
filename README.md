@@ -21,7 +21,10 @@ Automatically arranges your workflow nodes into clean, organized columns based o
 ### 🔗 Reroute Links
 Automatically detects and fixes overlapping links:
 - **Overlap Detection**: Identifies links that pass through other nodes
-- **Auto-Reroute**: Creates reroute points to route links around obstructing nodes
+- **Intelligent Routing**: Chooses the most efficient path (above, below, or between nodes)
+- **Gap Detection**: Finds and uses horizontal gaps between nodes within columns
+- **Path Optimization**: Selects routes with shortest total vertical distance
+- **Auto-Reroute**: Creates reroute points to route links cleanly
 - **Clean Workflows**: Results in more readable and maintainable workflows
 
 ## Installation
@@ -122,8 +125,19 @@ The extension uses a hybrid JavaScript/Python architecture:
 
 1. **Collect Links**: Gathers all connections between nodes
 2. **Detect Overlaps**: Checks which links pass through node bounding boxes
-3. **Calculate Points**: Determines reroute positions around obstructing nodes
-4. **Create Reroutes**: Adds LiteGraph reroute nodes at calculated positions
+3. **Find Horizontal Gaps**: Identifies clear vertical gaps between nodes in each column
+   - Detects gaps of 20px or larger between consecutive nodes
+   - Verifies horizontal paths are clear across all intervening columns
+   - Calculates vertical midpoint of each viable gap
+4. **Compare Routing Options**: Evaluates three routing strategies for each overlapping link
+   - Route above: Total vertical distance to top of highest node
+   - Route below: Total vertical distance to bottom of lowest node
+   - Route through gap: Total vertical distance to gap midpoint
+5. **Select Optimal Route**: Chooses the option with shortest combined vertical distance
+   - Considers distance from both origin and target endpoints
+   - Prefers gaps when they provide shorter paths than going around
+6. **Calculate Points**: Determines reroute positions based on selected routing strategy
+7. **Create Reroutes**: Adds LiteGraph reroute nodes at calculated positions
 
 ## Development
 

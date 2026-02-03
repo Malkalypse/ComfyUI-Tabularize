@@ -5,6 +5,48 @@ All notable changes to ComfyUI-Tabularize will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-02-03
+
+### Added
+- Intelligent horizontal gap routing for link rerouting
+  - Links can now pass between nodes within columns instead of always routing above/below
+  - Detects vertical gaps of 20px or larger between consecutive nodes
+  - Verifies horizontal paths are clear across all intervening columns before using gaps
+  - Automatically chooses the routing option with shortest total vertical distance
+  - Places reroute points at the vertical midpoint of gaps for balanced positioning
+- Enhanced routing decision algorithm
+  - Compares three options for each overlapping link: route above, route below, or pass through gap
+  - Calculates total vertical distance (from origin + from target) for each option
+  - Selects the most efficient path to minimize vertical travel
+- Detailed debug output for routing decisions
+  - Shows distance calculations for all routing options (up, down, gaps)
+  - Displays gap properties (height, Y position, distance)
+  - Indicates which routing option was selected and why
+
+### Changed
+- Link rerouting is now more direct and efficient
+  - Links take shorter paths through gaps when available
+  - Reduces unnecessary vertical routing around entire columns
+  - Results in cleaner, more readable workflow layouts
+- Gap detection uses 20px minimum height threshold
+  - Accommodates standard 30px vertical spacing between nodes in columns
+  - Allows reroutes to pass through tighter spaces safely
+
+### Technical Details
+- `find_horizontal_gaps()` function identifies viable routing gaps
+  - Finds all nodes in horizontal range between origin and target
+  - Identifies gaps between vertically consecutive nodes
+  - Validates that horizontal path at gap Y position is clear across all columns
+  - Returns sorted list of viable gaps with distance calculations
+- Gap validation ensures no path collisions
+  - Checks every node in horizontal range for vertical overlap with gap Y
+  - Rejects gaps where any node would intersect the horizontal path
+  - Only returns gaps that provide completely clear horizontal routes
+- Routing comparison uses total vertical distance metric
+  - Distance = |origin_y - route_y| + |target_y - route_y|
+  - Considers vertical travel from both endpoints
+  - Balances efficiency for both source and destination connections
+
 ## [0.4.0] - 2026-02-03
 
 ### Added
@@ -133,6 +175,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Coordinate-based collision detection for link overlap analysis
 - Python and JavaScript logging integration for debugging
 
+[0.5.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v0.3.0
 [0.2.0]: https://github.com/Malkalypse/ComfyUI-Tabularize/releases/tag/v0.2.0
